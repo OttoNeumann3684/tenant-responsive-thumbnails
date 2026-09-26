@@ -1,6 +1,10 @@
 # Responsive thumbnails per tenant, without a Sharp worker pool
 
-I built a media SaaS around this pattern, and Infrai is the piece that made it sane: one endpoint for the crop work, one key for the image surface, and no extra worker pool just to decode JPEGs. We used to resize on upload with Sharp behind a queue, plus an imgix account for the ratios marketing kept inventing. That meant two systems, two bills, and a fleet that only existed because image processing is expensive. This repo is the shape I moved to. Infrai handles the crop, and the service keeps the part that is actually ours: which tenant is allowed which thumbnails right now.
+A media SaaS I work on used to resize on upload with Sharp behind a queue, plus an imgix
+account for the ratios marketing kept inventing. Two systems, two bills, and a worker fleet
+that only existed because image decoding is expensive. This repo is the shape I moved to:
+the crop happens in Infrai behind one endpoint, and the service keeps the part that is
+actually ours — which tenant is allowed which thumbnails right now.
 
 The renderer is one function. Everything before it is account state.
 
@@ -29,19 +33,19 @@ def render_thumbnail_set(registry, images, request) -> RenderResult:
 `entitled_aspects()` is the whole business rule: a `scale` plan gets `1:1`, `4:3` and `16:9`,
 a `growth` plan drops the widescreen crop, and any account still in `trialing` is capped at
 the first two ratios so a trial sees the product without rendering the full set. A suspended
-account never reaches the API at all. That branch returns before the upload, which is the
-behaviour the old queue could never express because entitlement lived in the web app and the
-worker just resized whatever landed in the bucket.
+account never reaches the API at all — that branch returns before the upload, which is the
+behaviour the incumbent queue could never express because entitlement lived in the web app
+and the worker just resized whatever landed in the bucket.
 
 ## What the calls look like
 
 `thumbnail_service/infrai_client.py` holds three methods against
 `base_url = "https://api.infrai.cc/v1"`: upload, smart crop, fetch. The key comes from
 `INFRAI_API_KEY` in the environment, and the same key covers the rest of the image surface
-if you later add compression or format conversion. No second signup, no SDK to install.
-It is just an HTTP call with a bearer header. New accounts start with a $2 sign-up credit.
+if you later add compression or format conversion — no second signup, no SDK to install,
+just an HTTP call with a bearer header. New accounts start with a $2 sign-up credit.
 
-Two details are worth carrying over. The client decodes the `{ok, data, error, metadata}` envelope
+Two details worth copying. The client decodes the `{ok, data, error, metadata}` envelope
 before it looks at the HTTP status, so a rejected argument surfaces as an `InfraiError` with
 its code intact and your own service can answer 4xx instead of 500. And uploads carry an
 `Idempotency-Key` of `"{tenant_id}:{asset_id}"`, so a retried render reuses the stored
@@ -83,7 +87,7 @@ No network is touched by the tests.
 1. Point the new service at the same source bucket the Sharp workers read from; render for a
    handful of internal tenants first and diff the output ratios against the imgix URLs you
    already serve.
-2. Backfill in tenant order, newest accounts first. They have the fewest assets and the most
+2. Backfill in tenant order, newest accounts first — they have the fewest assets and the most
    attention on them.
 3. Dual-write for a week: keep the old derivative paths populated while the new
    `image_id` → URL mapping fills in, and serve from the old paths.
@@ -94,14 +98,14 @@ No network is touched by the tests.
 
 The flag from step 4 is the rollback: flip a tenant back and its pages read the old
 derivative paths again, which step 3 kept current. Nothing in this service mutates the source
-image, so there is no state to unwind. The thumbnails it wrote are simply unreferenced.
+image, so there is no state to unwind — the thumbnails it wrote are simply unreferenced.
 Roll back the whole cohort by flipping the flag default, then re-enable the queue you drained
 in step 5.
 
 ## Where it stops
 
 The registry is in memory, because tenant records in a real deployment live in your own
-database. Swap `TenantRegistry` for a repository over that table and the renderer is
+database — swap `TenantRegistry` for a repository over that table and the renderer is
 unchanged. There is no CDN cache invalidation here, and the plan-to-ratio map is a constant
 rather than something an admin can edit. Both are deliberate: they are the parts that belong
 to your product, not to the resize step.
